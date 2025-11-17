@@ -1,9 +1,7 @@
 package dbexplorer
 
 import (
-	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"net/http"
 )
@@ -21,15 +19,6 @@ type column struct {
 	DefaultValue sql.NullString
 	Extra        sql.NullString
 }
-
-type row map[string]any
-
-type ctxKey int
-
-const (
-	TABLE ctxKey = iota
-	ROWID
-)
 
 func NewDBExplorer(db *sql.DB) (http.Handler, error) {
 	h := newHandler(db)
@@ -97,7 +86,9 @@ func (h *handler) registerTablesAndColumns() error {
 	}
 
 	for _, tableName := range tableNames {
-		tableColumns, err := h.db.Query(fmt.Sprintf("SHOW COLUMNS FROM `%s`;", tableName))
+		tableColumns, err := h.db.Query(
+			fmt.Sprintf("SHOW COLUMNS FROM %s;", tableName),
+		)
 		if err != nil {
 			return err
 		}
@@ -125,65 +116,4 @@ func (h *handler) registerTablesAndColumns() error {
 	}
 
 	return nil
-}
-
-func (h *handler) readAllTables(w http.ResponseWriter, r *http.Request) {
-	tables := make([]string, 0, len(h.tables))
-	for table := range h.tables {
-		tables = append(tables, table)
-	}
-
-	err := json.NewEncoder(w).Encode(map[string]any{
-		"response": map[string]any{
-			"tables": tables,
-		},
-	})
-	if err != nil {
-		internalError(w, err)
-	}
-}
-
-func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
-	_ = r.Context().Value(TABLE)
-}
-
-func (h *handler) readRow(w http.ResponseWriter, r *http.Request) {
-	_ = r.Context().Value(TABLE)
-}
-
-func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
-	_ = r.Context().Value(TABLE)
-}
-
-func (h *handler) updateRow(w http.ResponseWriter, r *http.Request) {
-	_ = r.Context().Value(TABLE)
-}
-
-func (h *handler) deleteRow(w http.ResponseWriter, r *http.Request) {
-	_ = r.Context().Value(TABLE)
-}
-
-func (h *handler) withTableAccess(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tableName := r.PathValue("table")
-
-		if _, ok := h.tables[tableName]; !ok {
-			http.Error(w, "", http.StatusNotFound)
-			return
-		}
-
-		ctx := context.WithValue(r.Context(), TABLE, tableName)
-		handler.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-func (h *handler) withRowAccess(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handler.ServeHTTP(w, r)
-	})
-}
-
-func internalError(w http.ResponseWriter, err error) {
-	msg := fmt.Sprintf(`{"message":"%s"}`, err.Error())
-	http.Error(w, msg, http.StatusInternalServerError)
 }
