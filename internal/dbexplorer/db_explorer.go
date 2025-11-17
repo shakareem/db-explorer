@@ -77,39 +77,54 @@ func (h *handler) registerTablesAndColumns() error {
 		return err
 	}
 
-	defer tables.Close()
-
+	tableNames := []string{}
 	for tables.Next() {
 		var tableName string
 		if err := tables.Scan(&tableName); err != nil {
+			tables.Close()
 			return err
 		}
+		tableNames = append(tableNames, tableName)
+	}
 
+	if err := tables.Err(); err != nil {
+		tables.Close()
+		return err
+	}
+
+	if err := tables.Close(); err != nil {
+		return err
+	}
+
+	for _, tableName := range tableNames {
 		tableColumns, err := h.db.Query(fmt.Sprintf("SHOW COLUMNS FROM `%s`;", tableName))
 		if err != nil {
 			return err
 		}
 
-		defer tableColumns.Close()
-
 		columns := []column{}
 		for tableColumns.Next() {
 			var c column
 			if err := tableColumns.Scan(&c.Name, &c.Type, &c.Nullable, &c.Key, &c.DefaultValue, &c.Extra); err != nil {
+				tableColumns.Close()
 				return err
 			}
-
 			columns = append(columns, c)
 		}
 
 		if err := tableColumns.Err(); err != nil {
+			tableColumns.Close()
+			return err
+		}
+
+		if err := tableColumns.Close(); err != nil {
 			return err
 		}
 
 		h.tables[tableName] = columns
 	}
 
-	return tables.Err()
+	return nil
 }
 
 func (h *handler) readAllTables(w http.ResponseWriter, r *http.Request) {
@@ -118,13 +133,11 @@ func (h *handler) readAllTables(w http.ResponseWriter, r *http.Request) {
 		tables = append(tables, table)
 	}
 
-	err := json.NewEncoder(w).Encode(
-		struct {
-			Tables []string `json:"tables"`
-		}{
-			tables,
+	err := json.NewEncoder(w).Encode(map[string]any{
+		"response": map[string]any{
+			"tables": tables,
 		},
-	)
+	})
 	if err != nil {
 		internalError(w, err)
 	}
@@ -154,16 +167,8 @@ func (h *handler) withTableAccess(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tableName := r.PathValue("table")
 
-		ok := false
-		for table := range h.tables {
-			if table == tableName {
-				ok = true
-				break
-			}
-		}
-
-		if !ok {
-			http.Error(w, "", http.StatusBadRequest)
+		if _, ok := h.tables[tableName]; !ok {
+			http.Error(w, "", http.StatusNotFound)
 			return
 		}
 
