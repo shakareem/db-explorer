@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"hw6/internal/dbexplorer"
 	"io"
 	"reflect"
 	"testing"
@@ -30,6 +31,7 @@ type Case struct {
 
 var (
 	client = &http.Client{Timeout: time.Second}
+	DSN    = "root:1234@tcp(localhost:3306)/golang?charset=utf8"
 )
 
 func PrepareTestApis(db *sql.DB) {
@@ -101,7 +103,7 @@ func TestApis(t *testing.T) {
 	// возможно вам будет удобно закомментировать это, чтобы смотреть результат после теста
 	defer CleanupTestApis(db)
 
-	handler, err := NewDBExplorer(db) //nolint:typecheck
+	handler, err := dbexplorer.NewDBExplorer(db) //nolint:typecheck
 	if err != nil {
 		panic(err)
 	}
