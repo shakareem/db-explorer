@@ -4,6 +4,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"hw6/internal/dbexplorer"
 	"log"
 	"net/http"
 
@@ -27,7 +28,7 @@ func main() {
 		panic(err)
 	}
 
-	handler, err := NewDBExplorer(db) //nolint:typecheck
+	handler, err := dbexplorer.NewDBExplorer(db) //nolint:typecheck
 	if err != nil {
 		panic(err)
 	}
