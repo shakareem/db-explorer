@@ -125,7 +125,7 @@ func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
 	var requestBody map[string]any
 	err := json.NewDecoder(r.Body).Decode(&requestBody)
 	if err != nil {
-		StatusBadRequest(w, err)
+		badRequest(w, err)
 		return
 	}
 
@@ -143,23 +143,13 @@ func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
 			val = nil
 		}
 
-		switch v := val.(type) {
-		case string:
-			values = append(values, v)
-		case float64:
-			if strings.Contains(strings.ToUpper(col.Type), "INT") {
-				values = append(values, int64(v))
-			} else {
-				values = append(values, v)
-			}
-		case bool:
-			values = append(values, v)
-		case nil:
-			values = append(values, nil)
-		default:
-			values = append(values, fmt.Sprintf("%v", v))
+		val, err = validateColumnType(col, val)
+		if err != nil {
+			badRequest(w, err)
+			return
 		}
 
+		values = append(values, val)
 		placeholders = append(placeholders, "?")
 		columnNames = append(columnNames, col.Name)
 	}
@@ -204,32 +194,61 @@ func internalError(w http.ResponseWriter, err error) {
 	http.Error(w, msg, http.StatusInternalServerError)
 }
 
-func StatusBadRequest(w http.ResponseWriter, err error) {
+func badRequest(w http.ResponseWriter, err error) {
 	msg := fmt.Sprintf(`{"error":"%s"}`, err.Error())
 	http.Error(w, msg, http.StatusBadRequest)
 }
 
-func convertValue(raw []byte, sqlType string) any {
+func convertValue(raw []byte, columnType columnType) any {
 	if raw == nil {
 		return nil
 	}
 
-	sqlType = strings.ToUpper(sqlType)
-
-	switch {
-	case strings.Contains(sqlType, "INT"):
+	switch columnType {
+	case TYPEINT:
 		if val, err := strconv.Atoi(string(raw)); err == nil {
 			return val
 		}
-	case strings.Contains(sqlType, "FLOAT") ||
-		strings.Contains(sqlType, "DOUBLE") ||
-		strings.Contains(sqlType, "DECIMAL"):
+	case TYPEFLOAT:
 		if val, err := strconv.ParseFloat(string(raw), 64); err == nil {
 			return val
 		}
-	case strings.Contains(sqlType, "BOOL"):
+	case TYPEBOOL:
 		return string(raw) == "1"
 	}
 
 	return string(raw)
+}
+
+func validateColumnType(col column, val any) (any, error) {
+	ErrTypeMismatch := fmt.Errorf("field %s have invalid type", col.Name)
+
+	switch v := val.(type) {
+	case string:
+		if col.Type != TYPESTRING {
+			return struct{}{}, ErrTypeMismatch
+		}
+		return v, nil
+	case float64:
+		if v == float64(int64(v)) && col.Type == TYPEINT {
+			return int64(v), nil
+		} else {
+			if col.Type != TYPEFLOAT {
+				return struct{}{}, ErrTypeMismatch
+			}
+			return v, nil
+		}
+	case bool:
+		if col.Type != TYPEBOOL {
+			return struct{}{}, ErrTypeMismatch
+		}
+		return v, nil
+	case nil:
+		if !col.Nullable {
+			return struct{}{}, ErrTypeMismatch
+		}
+		return nil, nil
+	default:
+		return fmt.Sprintf("%v", v), nil
+	}
 }

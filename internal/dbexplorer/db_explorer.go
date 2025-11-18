@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 type handler struct {
@@ -13,12 +14,21 @@ type handler struct {
 
 type column struct {
 	Name         string
-	Type         string
-	Nullable     string
+	Type         columnType
+	Nullable     bool
 	Key          sql.NullString
 	DefaultValue sql.NullString
 	Extra        sql.NullString
 }
+
+type columnType int
+
+const (
+	TYPESTRING columnType = iota
+	TYPEINT
+	TYPEFLOAT
+	TYPEBOOL
+)
 
 func NewDBExplorer(db *sql.DB) (http.Handler, error) {
 	h := newHandler(db)
@@ -96,10 +106,22 @@ func (h *handler) registerTablesAndColumns() error {
 		columns := []column{}
 		for tableColumns.Next() {
 			var c column
-			if err := tableColumns.Scan(&c.Name, &c.Type, &c.Nullable, &c.Key, &c.DefaultValue, &c.Extra); err != nil {
+			var cType string
+			var cNullable string
+			err := tableColumns.Scan(&c.Name, &cType, &cNullable, &c.Key, &c.DefaultValue, &c.Extra)
+			if err != nil {
 				tableColumns.Close()
 				return err
 			}
+
+			c.Type = getType(cType)
+			switch cNullable {
+			case "YES":
+				c.Nullable = true
+			case "NO":
+				c.Nullable = false
+			}
+
 			columns = append(columns, c)
 		}
 
@@ -116,4 +138,21 @@ func (h *handler) registerTablesAndColumns() error {
 	}
 
 	return nil
+}
+
+func getType(sqlType string) columnType {
+	sqlType = strings.ToUpper(sqlType)
+
+	switch {
+	case strings.Contains(sqlType, "INT"):
+		return TYPEINT
+	case strings.Contains(sqlType, "FLOAT") ||
+		strings.Contains(sqlType, "DOUBLE") ||
+		strings.Contains(sqlType, "DECIMAL"):
+		return TYPEFLOAT
+	case strings.Contains(sqlType, "BOOL"):
+		return TYPEBOOL
+	}
+
+	return TYPESTRING
 }
