@@ -18,11 +18,11 @@ func (h *handler) withTableAccess(handler http.Handler) http.Handler {
 		tableName := r.PathValue("table")
 
 		if _, ok := h.tables[tableName]; !ok {
-			http.Error(w, "", http.StatusNotFound)
+			http.Error(w, `{"error": "unknown table"}`, http.StatusNotFound)
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), TABLE, escapeIdent(tableName))
+		ctx := context.WithValue(r.Context(), TABLE, tableName)
 		handler.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

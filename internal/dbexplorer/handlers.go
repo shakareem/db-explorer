@@ -1,9 +1,11 @@
 package dbexplorer
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -18,6 +20,8 @@ func (h *handler) readAllTables(w http.ResponseWriter, r *http.Request) {
 		tables = append(tables, table)
 	}
 
+	sort.Strings(tables)
+
 	err := json.NewEncoder(w).Encode(
 		Response{
 			map[string]any{"tables": tables},
@@ -25,12 +29,11 @@ func (h *handler) readAllTables(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		internalError(w, err)
+		return
 	}
 }
 
 func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
-	table := r.Context().Value(TABLE).(string)
-
 	limitString := r.FormValue("limit")
 	offsetString := r.FormValue("offset")
 
@@ -43,15 +46,16 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
+	table := r.Context().Value(TABLE).(string)
 	columns := h.tables[table]
 
-	columnNames := make([]string, len(h.tables[table]))
+	columnNames := make([]string, len(columns))
 	for i, column := range columns {
 		columnNames[i] = escapeIdent(column.Name)
 	}
 
 	rows, err := h.db.Query(
-		fmt.Sprintf("SELECT %s FROM %s;", strings.Join(columnNames, ", "), table),
+		fmt.Sprintf("SELECT %s FROM %s;", strings.Join(columnNames, ", "), escapeIdent(table)),
 	)
 	if err != nil {
 		internalError(w, err)
@@ -61,16 +65,29 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	records := make([]map[string]any, 0, limit)
-	i := -1
-	for rows.Next() {
-		i++
+	for i := 0; rows.Next(); i++ {
 		if i < offset {
 			continue
 		}
 
-		records = append(records, map[string]any{
-			// TODO
-		})
+		values := make([]any, len(columns))
+		for i := range values {
+			values[i] = new(sql.RawBytes)
+		}
+
+		err := rows.Scan(values...)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+
+		record := make(map[string]any, len(columns))
+		for i := range columns {
+			raw := *values[i].(*sql.RawBytes)
+			record[columns[i].Name] = convertValue(raw, columns[i].Type)
+		}
+
+		records = append(records, record)
 
 		if len(records) == limit {
 			break
@@ -89,6 +106,7 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		internalError(w, err)
+		return
 	}
 }
 
@@ -116,4 +134,29 @@ func internalError(w http.ResponseWriter, err error) {
 func StatusBadRequest(w http.ResponseWriter, err error) {
 	msg := fmt.Sprintf(`{"error":"%s"}`, err.Error())
 	http.Error(w, msg, http.StatusBadRequest)
+}
+
+func convertValue(raw sql.RawBytes, sqlType string) any {
+	if raw == nil {
+		return nil
+	}
+
+	sqlType = strings.ToUpper(sqlType)
+
+	switch {
+	case strings.Contains(sqlType, "INT"):
+		if val, err := strconv.Atoi(string(raw)); err == nil {
+			return val
+		}
+	case strings.Contains(sqlType, "FLOAT") ||
+		strings.Contains(sqlType, "DOUBLE") ||
+		strings.Contains(sqlType, "DECIMAL"):
+		if val, err := strconv.ParseFloat(string(raw), 64); err == nil {
+			return val
+		}
+	case strings.Contains(sqlType, "BOOL"):
+		return string(raw) == "1"
+	}
+
+	return string(raw)
 }
