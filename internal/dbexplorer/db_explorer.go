@@ -21,7 +21,7 @@ type table struct {
 type column struct {
 	Name            string
 	Type            columnType
-	Nullable        bool
+	IsNullable      bool
 	IsAutoIncrement bool
 	DefaultValue    sql.NullString
 }
@@ -122,9 +122,9 @@ func (h *handler) registerTablesAndColumns() error {
 			c.Type = getType(cType)
 			switch cNullable {
 			case "YES":
-				c.Nullable = true
+				c.IsNullable = true
 			case "NO":
-				c.Nullable = false
+				c.IsNullable = false
 			}
 
 			if cKey == "PRI" {

@@ -144,7 +144,7 @@ func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
 
 		val, ok := requestBody[col.Name]
 		if !ok {
-			val = nil
+			val = defaultValue(col)
 		}
 
 		val, err = validateColumnType(col, val)
@@ -176,7 +176,7 @@ func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
 
 	err = json.NewEncoder(w).Encode(
 		Response{
-			map[string]any{"id": lastID},
+			map[string]any{table.PrimaryKeyName: lastID},
 		},
 	)
 	if err != nil {
@@ -338,11 +338,28 @@ func validateColumnType(col column, val any) (any, error) {
 		}
 		return v, nil
 	case nil:
-		if !col.Nullable {
+		if !col.IsNullable {
 			return struct{}{}, ErrTypeMismatch
 		}
 		return nil, nil
 	default:
 		return fmt.Sprintf("%v", v), nil
 	}
+}
+
+func defaultValue(col column) any {
+	if col.IsNullable {
+		return nil
+	}
+
+	switch col.Type {
+	case TYPEINT:
+		return 0
+	case TYPEFLOAT:
+		return 0.0
+	case TYPEBOOL:
+		return false
+	}
+
+	return ""
 }
