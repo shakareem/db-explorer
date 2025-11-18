@@ -9,16 +9,21 @@ import (
 
 type handler struct {
 	db     *sql.DB
-	tables map[string][]column
+	tables map[string]table
+}
+
+type table struct {
+	Name           string
+	PrimaryKeyName string
+	Columns        []column
 }
 
 type column struct {
-	Name         string
-	Type         columnType
-	Nullable     bool
-	Key          sql.NullString
-	DefaultValue sql.NullString
-	Extra        sql.NullString
+	Name            string
+	Type            columnType
+	Nullable        bool
+	IsAutoIncrement bool
+	DefaultValue    sql.NullString
 }
 
 type columnType int
@@ -57,7 +62,7 @@ func NewDBExplorer(db *sql.DB) (http.Handler, error) {
 	)
 	mux.Handle(
 		"DELETE /{table}/{rowID}",
-		h.withTableAccess(h.withRowAccess(http.HandlerFunc(h.deleteRow))),
+		h.withTableAccess(http.HandlerFunc(h.deleteRow)),
 	)
 
 	return mux, nil
@@ -66,7 +71,7 @@ func NewDBExplorer(db *sql.DB) (http.Handler, error) {
 func newHandler(db *sql.DB) handler {
 	return handler{
 		db:     db,
-		tables: map[string][]column{},
+		tables: map[string]table{},
 	}
 }
 
@@ -104,11 +109,11 @@ func (h *handler) registerTablesAndColumns() error {
 		}
 
 		columns := []column{}
+		var primaryKeyName string
 		for tableColumns.Next() {
 			var c column
-			var cType string
-			var cNullable string
-			err := tableColumns.Scan(&c.Name, &cType, &cNullable, &c.Key, &c.DefaultValue, &c.Extra)
+			var cType, cNullable, cKey, cExtra string
+			err := tableColumns.Scan(&c.Name, &cType, &cNullable, &cKey, &c.DefaultValue, &cExtra)
 			if err != nil {
 				tableColumns.Close()
 				return err
@@ -120,6 +125,14 @@ func (h *handler) registerTablesAndColumns() error {
 				c.Nullable = true
 			case "NO":
 				c.Nullable = false
+			}
+
+			if cKey == "PRI" {
+				primaryKeyName = c.Name
+			}
+
+			if cExtra == "auto_increment" {
+				c.IsAutoIncrement = true
 			}
 
 			columns = append(columns, c)
@@ -134,7 +147,11 @@ func (h *handler) registerTablesAndColumns() error {
 			return err
 		}
 
-		h.tables[tableName] = columns
+		h.tables[tableName] = table{
+			Name:           tableName,
+			PrimaryKeyName: primaryKeyName,
+			Columns:        columns,
+		}
 	}
 
 	return nil

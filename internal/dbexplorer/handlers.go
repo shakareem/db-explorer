@@ -49,11 +49,11 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	table := r.Context().Value(TABLE).(string)
-	columns := h.tables[table]
+	tableName := r.Context().Value(TABLE).(string)
+	table := h.tables[tableName]
 
 	rows, err := h.db.Query(
-		fmt.Sprintf("SELECT * FROM %s;", table),
+		fmt.Sprintf("SELECT * FROM %s;", tableName),
 	)
 	if err != nil {
 		internalError(w, err)
@@ -68,7 +68,7 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		values := make([]any, len(columns))
+		values := make([]any, len(table.Columns))
 		for i := range values {
 			values[i] = new([]byte)
 		}
@@ -79,10 +79,10 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		record := make(map[string]any, len(columns))
-		for i := range columns {
+		record := make(map[string]any, len(table.Columns))
+		for i := range table.Columns {
 			raw := *values[i].(*[]byte)
-			record[columns[i].Name] = convertValue(raw, columns[i].Type)
+			record[table.Columns[i].Name] = convertValue(raw, table.Columns[i].Type)
 		}
 
 		records = append(records, record)
@@ -123,8 +123,8 @@ func (h *handler) readRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
-	table := r.Context().Value(TABLE).(string)
-	columns := h.tables[table]
+	tableName := r.Context().Value(TABLE).(string)
+	table := h.tables[tableName]
 
 	var requestBody map[string]any
 	err := json.NewDecoder(r.Body).Decode(&requestBody)
@@ -137,8 +137,8 @@ func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
 	var placeholders []string
 	var columnNames []string
 
-	for _, col := range columns {
-		if col.Extra.Valid && col.Extra.String == "auto_increment" {
+	for _, col := range table.Columns {
+		if col.IsAutoIncrement {
 			continue
 		}
 
@@ -160,7 +160,7 @@ func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.db.Exec(
 		fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);",
-			table, strings.Join(columnNames, ","), strings.Join(placeholders, ","),
+			tableName, strings.Join(columnNames, ","), strings.Join(placeholders, ","),
 		), values...,
 	)
 	if err != nil {
@@ -186,9 +186,9 @@ func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) updateRow(w http.ResponseWriter, r *http.Request) {
-	table := r.Context().Value(TABLE).(string)
+	tableName := r.Context().Value(TABLE).(string)
 	rowID := r.Context().Value(ROWID).(string)
-	columns := h.tables[table]
+	table := h.tables[tableName]
 
 	var requestBody map[string]any
 	err := json.NewDecoder(r.Body).Decode(&requestBody)
@@ -200,8 +200,8 @@ func (h *handler) updateRow(w http.ResponseWriter, r *http.Request) {
 	var values []any
 	var columnToUpdate []string
 
-	for _, col := range columns {
-		if col.Extra.Valid && col.Extra.String == "auto_increment" {
+	for _, col := range table.Columns {
+		if col.IsAutoIncrement {
 			if _, ok := requestBody[col.Name]; ok {
 				badRequest(w, ErrTypeMismatch(col.Name))
 				return
@@ -226,8 +226,8 @@ func (h *handler) updateRow(w http.ResponseWriter, r *http.Request) {
 	values = append(values, rowID)
 
 	result, err := h.db.Exec(
-		fmt.Sprintf("UPDATE %s SET %s WHERE id = ?;",
-			table, strings.Join(columnToUpdate, ","),
+		fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?;",
+			tableName, strings.Join(columnToUpdate, ","), table.PrimaryKeyName,
 		), values...,
 	)
 	if err != nil {
@@ -253,8 +253,34 @@ func (h *handler) updateRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) deleteRow(w http.ResponseWriter, r *http.Request) {
-	_ = r.Context().Value(TABLE).(string)
-	// TODO
+	tableName := r.Context().Value(TABLE).(string)
+	rowID := r.PathValue("rowID")
+	table := h.tables[tableName]
+
+	result, err := h.db.Exec(
+		fmt.Sprintf("DELETE FROM %s WHERE %s = ?;", tableName, table.PrimaryKeyName), rowID,
+	)
+
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	err = json.NewEncoder(w).Encode(
+		Response{
+			map[string]any{"deleted": rowsAffected},
+		},
+	)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 }
 
 func internalError(w http.ResponseWriter, err error) {

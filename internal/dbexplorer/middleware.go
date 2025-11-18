@@ -31,15 +31,16 @@ func (h *handler) withTableAccess(handler http.Handler) http.Handler {
 
 func (h *handler) withRowAccess(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		table := r.Context().Value(TABLE).(string)
+		tableName := r.Context().Value(TABLE).(string)
 		rowID := r.PathValue("rowID")
+		table := h.tables[tableName]
 
 		row := h.db.QueryRow(
-			fmt.Sprintf("SELECT * FROM %s WHERE id = ?;", table), rowID,
+			fmt.Sprintf("SELECT * FROM %s WHERE %s = ?;",
+				tableName, table.PrimaryKeyName), rowID,
 		)
 
-		columns := h.tables[table]
-		values := make([]any, len(columns))
+		values := make([]any, len(table.Columns))
 		for i := range values {
 			values[i] = new([]byte)
 		}
@@ -58,10 +59,10 @@ func (h *handler) withRowAccess(handler http.Handler) http.Handler {
 			return
 		}
 
-		record := make(map[string]any, len(columns))
-		for i := range columns {
+		record := make(map[string]any, len(table.Columns))
+		for i := range table.Columns {
 			raw := *values[i].(*[]byte)
-			record[columns[i].Name] = convertValue(raw, columns[i].Type)
+			record[table.Columns[i].Name] = convertValue(raw, table.Columns[i].Type)
 		}
 
 		ctx := context.WithValue(r.Context(), RECORD, record)
