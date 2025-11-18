@@ -2,8 +2,8 @@ package dbexplorer
 
 import (
 	"context"
+	"fmt"
 	"net/http"
-	"strings"
 )
 
 type ctxKey int
@@ -11,6 +11,7 @@ type ctxKey int
 const (
 	TABLE ctxKey = iota
 	ROWID
+	ROW
 )
 
 func (h *handler) withTableAccess(handler http.Handler) http.Handler {
@@ -29,11 +30,19 @@ func (h *handler) withTableAccess(handler http.Handler) http.Handler {
 
 func (h *handler) withRowAccess(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// TODO
-		handler.ServeHTTP(w, r)
-	})
-}
+		table := r.Context().Value(TABLE).(string)
+		rowID := r.PathValue("rowID")
 
-func escapeIdent(name string) string {
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+		row := h.db.QueryRow(
+			fmt.Sprintf("SELECT * FROM %s WHERE id = ?", escapeIdent(table)), rowID,
+		)
+		if row.Err() != nil {
+			http.Error(w, `{"error": "record not found"}`, http.StatusNotFound)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), ROW, row)
+		ctx = context.WithValue(ctx, ROWID, rowID)
+		handler.ServeHTTP(w, r.WithContext(ctx))
+	})
 }

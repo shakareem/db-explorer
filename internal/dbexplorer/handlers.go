@@ -49,13 +49,8 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 	table := r.Context().Value(TABLE).(string)
 	columns := h.tables[table]
 
-	columnNames := make([]string, len(columns))
-	for i, column := range columns {
-		columnNames[i] = escapeIdent(column.Name)
-	}
-
 	rows, err := h.db.Query(
-		fmt.Sprintf("SELECT %s FROM %s;", strings.Join(columnNames, ", "), escapeIdent(table)),
+		fmt.Sprintf("SELECT * FROM %s;", escapeIdent(table)),
 	)
 	if err != nil {
 		internalError(w, err)
@@ -134,6 +129,10 @@ func internalError(w http.ResponseWriter, err error) {
 func StatusBadRequest(w http.ResponseWriter, err error) {
 	msg := fmt.Sprintf(`{"error":"%s"}`, err.Error())
 	http.Error(w, msg, http.StatusBadRequest)
+}
+
+func escapeIdent(name string) string {
+	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }
 
 func convertValue(raw sql.RawBytes, sqlType string) any {
