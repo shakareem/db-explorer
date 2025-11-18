@@ -106,7 +106,17 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) readRow(w http.ResponseWriter, r *http.Request) {
-	_ = r.Context().Value(TABLE).(string)
+	record := r.Context().Value(RECORD).(map[string]any)
+
+	err := json.NewEncoder(w).Encode(
+		Response{
+			map[string]any{"record": record},
+		},
+	)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 }
 
 func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +145,7 @@ func escapeIdent(name string) string {
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }
 
-func convertValue(raw sql.RawBytes, sqlType string) any {
+func convertValue(raw []byte, sqlType string) any {
 	if raw == nil {
 		return nil
 	}

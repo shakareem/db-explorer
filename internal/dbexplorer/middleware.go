@@ -2,6 +2,7 @@ package dbexplorer
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 )
@@ -11,7 +12,7 @@ type ctxKey int
 const (
 	TABLE ctxKey = iota
 	ROWID
-	ROW
+	RECORD
 )
 
 func (h *handler) withTableAccess(handler http.Handler) http.Handler {
@@ -36,12 +37,34 @@ func (h *handler) withRowAccess(handler http.Handler) http.Handler {
 		row := h.db.QueryRow(
 			fmt.Sprintf("SELECT * FROM %s WHERE id = ?", escapeIdent(table)), rowID,
 		)
-		if row.Err() != nil {
+
+		columns := h.tables[table]
+		values := make([]any, len(columns))
+		for i := range values {
+			values[i] = new([]byte)
+		}
+
+		err := row.Scan(values...)
+		if err == sql.ErrNoRows {
 			http.Error(w, `{"error": "record not found"}`, http.StatusNotFound)
 			return
 		}
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		if row.Err() != nil {
+			internalError(w, err)
+			return
+		}
 
-		ctx := context.WithValue(r.Context(), ROW, row)
+		record := make(map[string]any, len(columns))
+		for i := range columns {
+			raw := *values[i].(*[]byte)
+			record[columns[i].Name] = convertValue(raw, columns[i].Type)
+		}
+
+		ctx := context.WithValue(r.Context(), RECORD, record)
 		ctx = context.WithValue(ctx, ROWID, rowID)
 		handler.ServeHTTP(w, r.WithContext(ctx))
 	})
