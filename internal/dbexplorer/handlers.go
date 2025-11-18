@@ -13,6 +13,10 @@ type Response struct {
 	Response map[string]any `json:"response"`
 }
 
+func ErrTypeMismatch(colName string) error {
+	return fmt.Errorf("field %s have invalid type", colName)
+}
+
 func (h *handler) readAllTables(w http.ResponseWriter, r *http.Request) {
 	tables := make([]string, 0, len(h.tables))
 	for table := range h.tables {
@@ -155,8 +159,8 @@ func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.db.Exec(
-		fmt.Sprintf("INSERT INTO `%s` (%s) VALUES (%s);",
-			table, strings.Join(columnNames, ", "), strings.Join(placeholders, ", "),
+		fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);",
+			table, strings.Join(columnNames, ","), strings.Join(placeholders, ","),
 		), values...,
 	)
 	if err != nil {
@@ -182,11 +186,75 @@ func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) updateRow(w http.ResponseWriter, r *http.Request) {
-	_ = r.Context().Value(TABLE).(string)
+	table := r.Context().Value(TABLE).(string)
+	rowID := r.Context().Value(ROWID).(string)
+	columns := h.tables[table]
+
+	var requestBody map[string]any
+	err := json.NewDecoder(r.Body).Decode(&requestBody)
+	if err != nil {
+		badRequest(w, err)
+		return
+	}
+
+	var values []any
+	var columnToUpdate []string
+
+	for _, col := range columns {
+		if col.Extra.Valid && col.Extra.String == "auto_increment" {
+			if _, ok := requestBody[col.Name]; ok {
+				badRequest(w, ErrTypeMismatch(col.Name))
+				return
+			}
+		}
+
+		val, ok := requestBody[col.Name]
+		if !ok {
+			continue
+		}
+
+		val, err = validateColumnType(col, val)
+		if err != nil {
+			badRequest(w, err)
+			return
+		}
+
+		values = append(values, val)
+		columnToUpdate = append(columnToUpdate, fmt.Sprintf("%s = ?", col.Name))
+	}
+
+	values = append(values, rowID)
+
+	result, err := h.db.Exec(
+		fmt.Sprintf("UPDATE %s SET %s WHERE id = ?;",
+			table, strings.Join(columnToUpdate, ","),
+		), values...,
+	)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	err = json.NewEncoder(w).Encode(
+		Response{
+			map[string]any{"updated": rowsAffected},
+		},
+	)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 }
 
 func (h *handler) deleteRow(w http.ResponseWriter, r *http.Request) {
 	_ = r.Context().Value(TABLE).(string)
+	// TODO
 }
 
 func internalError(w http.ResponseWriter, err error) {
@@ -221,7 +289,7 @@ func convertValue(raw []byte, columnType columnType) any {
 }
 
 func validateColumnType(col column, val any) (any, error) {
-	ErrTypeMismatch := fmt.Errorf("field %s have invalid type", col.Name)
+	ErrTypeMismatch := ErrTypeMismatch(col.Name)
 
 	switch v := val.(type) {
 	case string:
