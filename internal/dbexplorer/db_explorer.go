@@ -38,7 +38,7 @@ func NewDBExplorer(db *sql.DB) (http.Handler, error) {
 		h.withTableAccess(h.withRowAccess(http.HandlerFunc(h.readRow))),
 	)
 	mux.Handle(
-		"PUT /{table}",
+		"PUT /{table}/",
 		h.withTableAccess(http.HandlerFunc(h.createRow)),
 	)
 	mux.Handle(

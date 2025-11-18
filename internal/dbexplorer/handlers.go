@@ -1,7 +1,6 @@
 package dbexplorer
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -50,7 +49,7 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 	columns := h.tables[table]
 
 	rows, err := h.db.Query(
-		fmt.Sprintf("SELECT * FROM %s;", escapeIdent(table)),
+		fmt.Sprintf("SELECT * FROM %s;", table),
 	)
 	if err != nil {
 		internalError(w, err)
@@ -67,7 +66,7 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 
 		values := make([]any, len(columns))
 		for i := range values {
-			values[i] = new(sql.RawBytes)
+			values[i] = new([]byte)
 		}
 
 		err := rows.Scan(values...)
@@ -78,7 +77,7 @@ func (h *handler) readTable(w http.ResponseWriter, r *http.Request) {
 
 		record := make(map[string]any, len(columns))
 		for i := range columns {
-			raw := *values[i].(*sql.RawBytes)
+			raw := *values[i].(*[]byte)
 			record[columns[i].Name] = convertValue(raw, columns[i].Type)
 		}
 
@@ -120,7 +119,76 @@ func (h *handler) readRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) createRow(w http.ResponseWriter, r *http.Request) {
-	_ = r.Context().Value(TABLE).(string)
+	table := r.Context().Value(TABLE).(string)
+	columns := h.tables[table]
+
+	var requestBody map[string]any
+	err := json.NewDecoder(r.Body).Decode(&requestBody)
+	if err != nil {
+		StatusBadRequest(w, err)
+		return
+	}
+
+	var values []any
+	var placeholders []string
+	var columnNames []string
+
+	for _, col := range columns {
+		if col.Extra.Valid && col.Extra.String == "auto_increment" {
+			continue
+		}
+
+		val, ok := requestBody[col.Name]
+		if !ok {
+			val = nil
+		}
+
+		switch v := val.(type) {
+		case string:
+			values = append(values, v)
+		case float64:
+			if strings.Contains(strings.ToUpper(col.Type), "INT") {
+				values = append(values, int64(v))
+			} else {
+				values = append(values, v)
+			}
+		case bool:
+			values = append(values, v)
+		case nil:
+			values = append(values, nil)
+		default:
+			values = append(values, fmt.Sprintf("%v", v))
+		}
+
+		placeholders = append(placeholders, "?")
+		columnNames = append(columnNames, col.Name)
+	}
+
+	result, err := h.db.Exec(
+		fmt.Sprintf("INSERT INTO `%s` (%s) VALUES (%s);",
+			table, strings.Join(columnNames, ", "), strings.Join(placeholders, ", "),
+		), values...,
+	)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	lastID, err := result.LastInsertId()
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	err = json.NewEncoder(w).Encode(
+		Response{
+			map[string]any{"id": lastID},
+		},
+	)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 }
 
 func (h *handler) updateRow(w http.ResponseWriter, r *http.Request) {
@@ -139,10 +207,6 @@ func internalError(w http.ResponseWriter, err error) {
 func StatusBadRequest(w http.ResponseWriter, err error) {
 	msg := fmt.Sprintf(`{"error":"%s"}`, err.Error())
 	http.Error(w, msg, http.StatusBadRequest)
-}
-
-func escapeIdent(name string) string {
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }
 
 func convertValue(raw []byte, sqlType string) any {

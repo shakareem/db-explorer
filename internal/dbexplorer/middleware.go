@@ -35,7 +35,7 @@ func (h *handler) withRowAccess(handler http.Handler) http.Handler {
 		rowID := r.PathValue("rowID")
 
 		row := h.db.QueryRow(
-			fmt.Sprintf("SELECT * FROM %s WHERE id = ?", escapeIdent(table)), rowID,
+			fmt.Sprintf("SELECT * FROM %s WHERE id = ?;", table), rowID,
 		)
 
 		columns := h.tables[table]
